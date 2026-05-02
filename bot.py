@@ -35,9 +35,9 @@ from pydantic import BaseModel
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")   # <-- paste your key or set env var
 GEMINI_MODEL   = "gemini-2.0-flash"                      # fast + smart + free
-TEAM_NAME      = "VeraBuilder"
-TEAM_MEMBERS   = ["Your Name"]
-CONTACT_EMAIL  = "your@email.com"
+TEAM_NAME      = "Smith's Bot"
+TEAM_MEMBERS   = ["Patel Smith Shaileshbhai"]
+CONTACT_EMAIL  = "smithsp5177@gmail.com"
 
 # ─────────────────────────────────────────────────────────────────
 # APP SETUP
