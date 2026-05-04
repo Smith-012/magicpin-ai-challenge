@@ -59,19 +59,25 @@ ended_convs:   set[str]          = set() # conversation_ids that were ended
 def call_gemini(prompt: str, system: str = "") -> str:
     """Call Gemini API and return the text response."""
     import time
-    time.sleep(4) # Rate limit protection (15 RPM max on free tier)
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=system if system else None,
-            generation_config={"temperature": 0.0, "max_output_tokens": 1024}
-        )
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        return f"ERROR: {e}"
+    import google.generativeai as genai
+    genai.configure(api_key=GEMINI_API_KEY)
+    
+    # Try up to 3 times to handle 429 Rate Limits
+    for attempt in range(3):
+        try:
+            model = genai.GenerativeModel(
+                model_name=GEMINI_MODEL,
+                system_instruction=system if system else None,
+                generation_config={"temperature": 0.0, "max_output_tokens": 1024, "response_mime_type": "application/json"}
+            )
+            response = model.generate_content(prompt)
+            return response.text.strip()
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                time.sleep(4 * (attempt + 1))
+                continue
+            return f'{{"error": "{e}"}}'
+    return "{}"
 
 
 def call_gemini_json(prompt: str, system: str = "") -> dict:
@@ -307,13 +313,34 @@ Return JSON only:
     return result
 
 
-def compose_reply(conversation_id: str, merchant_id: str, message: str, turn_number: int) -> dict:
-    """Compose a reply to a merchant message in an ongoing conversation."""
+def compose_reply(conversation_id: str, merchant_id: str, message: str, turn_number: int, from_role: str = "merchant", customer_id: Optional[str] = None) -> dict:
+    """Compose a reply to a message in an ongoing conversation."""
 
-    # Check conversation history
     history = conversations.get(conversation_id, [])
 
-    # Auto-reply detection
+    # If message is from a customer, act as the merchant on behalf
+    if from_role == "customer":
+        customer = get_customer(customer_id) if customer_id else None
+        cust_name = customer.get("identity", {}).get("name", "Customer") if customer else "Customer"
+        merchant = get_merchant(merchant_id)
+        owner_name = merchant.get("identity", {}).get("owner_first_name", "Merchant") if merchant else "Merchant"
+        
+        prompt = f"""You are {owner_name}, the business owner. A customer ({cust_name}) just replied: "{message}".
+Previous conversation: {json.dumps(history[-3:] if len(history) >= 3 else history)}
+
+Reply naturally to the customer, confirming their request or answering their question.
+Keep it extremely brief (1-2 sentences). You are acting as the merchant.
+
+Return JSON only: {{"body": "...", "cta": "none", "rationale": "Replying to customer request."}}"""
+        result = call_gemini_json(prompt, COMPOSER_SYSTEM)
+        return {
+            "action": "send",
+            "body": result.get("body", "Confirmed! See you then."),
+            "cta": result.get("cta", "none"),
+            "rationale": result.get("rationale", "Replied on behalf of merchant to customer.")
+        }
+
+    # Merchant reply handling
     if is_auto_reply(message):
         auto_count = sum(1 for t in history if t.get("from") == "merchant" and is_auto_reply(t.get("msg", "")))
         if auto_count >= 2:
@@ -335,14 +362,12 @@ def compose_reply(conversation_id: str, merchant_id: str, message: str, turn_num
                 "rationale": "Detected likely auto-reply. One prompt to flag it for the owner, then wait."
             }
 
-    # Hard opt-out / hostile
     if is_hostile_or_opt_out(message):
         return {
             "action": "end",
             "rationale": "Merchant explicitly opted out or expressed strong disinterest. Closing conversation respectfully."
         }
 
-    # Intent transition — merchant committed to action
     if is_explicit_intent(message) and turn_number <= 4:
         merchant = get_merchant(merchant_id)
         owner    = merchant.get("identity", {}).get("owner_first_name", "there") if merchant else "there"
@@ -368,7 +393,6 @@ Return JSON: {{"body": "...", "cta": "binary_confirm_cancel", "rationale": "..."
             "rationale": result.get("rationale", "Merchant committed — switched to action mode.")
         }
 
-    # General reply composition
     merchant = get_merchant(merchant_id)
     cat_slug = merchant.get("category_slug", "") if merchant else ""
     category = get_category(cat_slug) if cat_slug else {}
@@ -485,7 +509,8 @@ async def tick(body: TickBody):
         if expires_at:
             try:
                 exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                if datetime.now(timezone.utc) > exp:
+                sim_now = datetime.fromisoformat(body.now.replace("Z", "+00:00"))
+                if sim_now > exp:
                     continue
             except:
                 pass
@@ -571,7 +596,8 @@ async def reply(body: ReplyBody):
     })
 
     merchant_id = body.merchant_id or ""
-    result = compose_reply(conv_id, merchant_id, body.message, body.turn_number)
+    customer_id = body.customer_id
+    result = compose_reply(conv_id, merchant_id, body.message, body.turn_number, body.from_role, customer_id)
 
     if result.get("action") == "end":
         ended_convs.add(conv_id)
