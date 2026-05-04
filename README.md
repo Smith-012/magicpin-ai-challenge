@@ -73,4 +73,4 @@ python bot.py
 - **In-Memory Store**: Used Python dictionaries for state management (suitable for the 60-minute simulation window). For a full production rollout, this would be replaced with Redis.
 
 ---
-*Built with ❤️ by Patel Smith Shaileshbhai for the magicpin AI Challenge.*
+*Built with ❤️ by Patel Smith for the magicpin AI Challenge.*
