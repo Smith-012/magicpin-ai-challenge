@@ -1,57 +1,76 @@
-# Vera Bot — magicpin AI Challenge Submission
+# 🤖 Vera: AI Merchant Assistant
 
-## Approach
+Welcome to **Vera**! This is a stateful, context-aware AI conversational agent built for the [magicpin AI Challenge](https://magicpin.com/vera/ai-challenge). Vera acts as a smart WhatsApp assistant that communicates with local merchants (like dentists, salons, and restaurants) to boost their engagement and help them manage customer bookings.
 
-**Model**: Google Gemini 2.0 Flash (temperature=0 for determinism)
+## ✨ Key Features
 
-**Architecture**: Single-prompt LLM composer with trigger-kind dispatch, built on FastAPI.
+- **🧠 Context-Aware AI**: Powered by Google's **Gemini 2.0 Flash**, Vera dynamically composes WhatsApp messages based on 4 layers of live context (Merchant data, Category trends, Customer history, and Trigger events).
+- **⚡ High-Performance API**: Built on **FastAPI**, handling high-throughput asynchronous requests with instant JSON validation.
+- **🔄 Stateful Memory**: Maintains conversation history in-memory to remember what the merchant or customer said 3 turns ago.
+- **🎯 Intent Routing**: Smartly detects when a merchant commits to an action (e.g., "let's do it") and instantly switches from "sales mode" to "action mode".
+- **🛡️ Auto-Reply & Spam Protection**: Detects WhatsApp Business automated replies and backs off to prevent spamming. Gracefully handles hostile messages or opt-outs.
+- **🗣️ Dynamic Code-Switching**: Automatically analyzes merchant preferences to speak in clean English or natural Hindi-English code-mix (Hinglish).
 
-### How it works
+---
 
-1. **Context Store** — all 4 context types (category, merchant, trigger, customer) are stored in-memory with version tracking. Higher version replaces atomically; same version is a no-op (idempotent).
+## 🛠️ Tech Stack
 
-2. **Tick Handler** — on each `/v1/tick`, the bot inspects all `available_triggers`, looks up the associated merchant + category + optional customer, checks suppression keys, and calls the LLM composer for each eligible trigger.
+- **Backend Framework**: FastAPI (Python)
+- **Server**: Uvicorn
+- **LLM Engine**: Google Gemini API (`gemini-2.0-flash`)
+- **Data Validation**: Pydantic
+- **Deployment**: Render
 
-3. **Composer** — a single Gemini prompt receives all 4 context layers and returns: `body`, `cta`, `send_as`, `suppression_key`, `rationale`. The prompt is structured to enforce:
-   - Specificity (real numbers from context)
-   - Category voice (clinical for dentists, warm for salons, etc.)
-   - Hindi-English code-mix when merchant language includes `hi`
-   - Single CTA at the end of message
+---
 
-4. **Reply Handler** — on `/v1/reply`:
-   - **Auto-reply detection**: regex patterns match canned WA Business replies → escalates: send (first) → wait 24h (second) → end (third+)
-   - **Intent transition**: detects "ok let's do it / confirm / go ahead" → switches immediately to action mode (no more qualifying questions)
-   - **Hostile/opt-out**: detects "stop / spam / not interested" → graceful `end`
-   - **General replies**: Gemini continues the conversation in-context
+## 🚀 How It Works (The 5 Endpoints)
 
-5. **Suppression**: Each trigger has a `suppression_key` — once sent, it's tracked in-memory and won't fire again on the same test run.
+Vera strictly follows a 5-endpoint API contract to integrate seamlessly with external event systems:
 
-### Tradeoffs
+1. `GET /v1/healthz` 🩺 — Returns the server's health status and how many contexts are currently loaded in memory.
+2. `GET /v1/metadata` 📊 — Returns team details and the LLM approach being used.
+3. `POST /v1/context` 📂 — Accepts real-time business data payloads (Merchant stats, Customer profiles) and stores them securely in memory.
+4. `POST /v1/tick` ⏱️ — The "heartbeat". When a trigger fires (like a drop in views), Vera analyzes all contexts and uses Gemini to compose a highly personalized, compelling WhatsApp message to the merchant.
+5. `POST /v1/reply` 💬 — Handles live 2-way conversations. Vera reads the message, identifies if it's from a customer or merchant, and uses the LLM to generate the perfect response.
 
-- **In-memory state**: Suitable for the 60-minute test window. Would use Redis for production.
-- **Single prompt**: Simpler than multi-step chain, but means the prompt must handle all trigger kinds. A routing layer by `trigger.kind` would improve quality further.
-- **Gemini 2.0 Flash**: Chosen for speed (<5s per call) and free API access. GPT-4o or Claude would score marginally better on nuance.
+---
 
-### What additional context would help most
+## 💻 How to Run Locally
 
-1. **Real open slot data** for customer-facing recall messages (we currently ask the merchant to confirm slots)
-2. **Actual conversation history** from previous sessions (current context only has last 2 turns)
-3. **Merchant language detection per-turn** (language can switch mid-conversation)
-4. **Peer stats scoped to exact locality** (current data is city-level)
+Want to spin up Vera on your own machine? It's super easy!
 
-## Running locally
-
+### 1. Install Dependencies
+Make sure you have Python installed, then run:
 ```bash
-pip install -r requirements.txt
-set GEMINI_API_KEY=your_key_here      # Windows
+pip install fastapi uvicorn google-generativeai pydantic
+```
+
+### 2. Set your Gemini API Key
+Get a free API key from [Google AI Studio](https://aistudio.google.com/) and set it as an environment variable:
+
+**Windows (PowerShell):**
+```powershell
+$env:GEMINI_API_KEY="your_api_key_here"
+```
+**Mac/Linux:**
+```bash
+export GEMINI_API_KEY="your_api_key_here"
+```
+
+### 3. Start the Server
+Run the FastAPI server using Uvicorn:
+```bash
 python bot.py
 ```
+*(The bot will start running on `http://localhost:8080`)*
 
-Then test:
-```bash
-python judge_simulator.py
-```
+---
 
-## Deployment
+## 📈 Challenge Learnings & Architecture Decisions
 
-Deployed on Render (free tier) — permanent public URL, no PC required.
+- **Single-Prompt vs. Chain**: I opted for a single, highly detailed master prompt to minimize latency and avoid API rate limits, ensuring responses always return within the strict <30s timeout window.
+- **Exponential Backoff**: Implemented retry logic to gracefully handle free-tier API rate limits during heavy load testing.
+- **In-Memory Store**: Used Python dictionaries for state management (suitable for the 60-minute simulation window). For a full production rollout, this would be replaced with Redis.
+
+---
+*Built with ❤️ by Patel Smith Shaileshbhai for the magicpin AI Challenge.*
